@@ -1,0 +1,82 @@
+# ============================================================
+# regime-trader  –  master configuration
+# ============================================================
+
+# ------------------------------------
+# Broker / execution
+# ------------------------------------
+broker:
+  paper_trading: true                 # flip to false for live trading
+  symbols:
+    - SPY
+    - QQQ
+    - AAPL
+    - MSFT
+    - AMZN
+    - GOOGL
+    - NVDA
+    - META
+    - TSLA
+    - AMD
+  timeframe: "1Day"                   # Alpaca bar timeframe
+
+# ------------------------------------
+# Hidden Markov Model – regime detection
+# ------------------------------------
+hmm:
+  n_candidates: [3, 4, 5, 6, 7]      # state counts to cross-validate
+  n_init: 10                          # random restarts per candidate
+  covariance_type: "full"             # full | diag | tied | spherical
+  min_train_bars: 252                 # minimum bars before first fit
+  stability_bars: 3                   # consecutive bars to confirm new regime
+  flicker_window: 20                  # rolling window for flicker detection
+  flicker_threshold: 4                # max regime switches allowed in window
+  min_confidence: 0.55                # minimum posterior prob to act on a regime
+
+# ------------------------------------
+# Regime-based allocation strategies
+# ------------------------------------
+strategy:
+  low_vol_allocation: 0.95            # target equity fraction in low-vol regime
+  mid_vol_allocation_trend: 0.95      # mid-vol with positive trend signal
+  mid_vol_allocation_no_trend: 0.60   # mid-vol without trend confirmation
+  high_vol_allocation: 0.60           # target equity fraction in high-vol regime
+  low_vol_leverage: 1.25              # leverage multiplier in low-vol regime
+  rebalance_threshold: 0.10           # drift before triggering rebalance (10 %)
+  uncertainty_size_mult: 0.50         # position-size scalar when regime is uncertain
+
+# ------------------------------------
+# Risk management
+# ------------------------------------
+risk:
+  max_risk_per_trade: 0.01            # max portfolio fraction risked per trade
+  max_exposure: 0.80                  # max total gross exposure
+  max_leverage: 1.25                  # hard leverage ceiling
+  max_single_position: 0.15           # max single-symbol weight
+  max_concurrent: 5                   # max open positions at once
+  max_daily_trades: 20                # circuit-breaker: max trades per day
+
+  # Drawdown controls
+  daily_dd_reduce: 0.02               # reduce size when daily DD exceeds 2 %
+  daily_dd_halt: 0.03                 # halt trading when daily DD exceeds 3 %
+  weekly_dd_reduce: 0.05              # reduce size when weekly DD exceeds 5 %
+  weekly_dd_halt: 0.07                # halt trading when weekly DD exceeds 7 %
+  max_dd_from_peak: 0.10              # max drawdown from rolling peak (10 %)
+
+# ------------------------------------
+# Backtesting
+# ------------------------------------
+backtest:
+  slippage_pct: 0.0005                # one-way slippage as fraction of price
+  initial_capital: 100_000            # starting portfolio value in USD
+  train_window: 252                   # bars in each walk-forward training fold
+  test_window: 126                    # bars in each walk-forward test fold
+  step_size: 126                      # bars to advance between folds
+  risk_free_rate: 0.045               # annualised risk-free rate for Sharpe calc
+
+# ------------------------------------
+# Monitoring
+# ------------------------------------
+monitoring:
+  dashboard_refresh_seconds: 5        # live dashboard refresh interval
+  alert_rate_limit_minutes: 15        # minimum gap between repeated alerts
