@@ -1,0 +1,278 @@
+// ============================================================================
+// regime_trader.pine  —  Regime-Trader TradingView Signal Indicator
+// ============================================================================
+// VERSION:  Pine Script v5
+// PURPOSE:  Detect volatility regime changes and fire webhook alerts to the
+//           regime-trader FastAPI server (broker/tv_webhook.py).
+//
+// HOW IT WORKS
+// ------------
+// This indicator proxies the Python HMM's volatility-regime logic using
+// pure Pine Script signals:
+//
+//   LOW  VOL regime  → ATR/close ratio below low_vol_threshold
+//   HIGH VOL regime  → ATR/close ratio above high_vol_threshold
+//   MID  VOL regime  → everything in between
+//
+// Entry / Exit rules per regime:
+//   LOW  → BUY  when EMA fast crosses above EMA slow (trend confirmation)
+//   MID  → BUY  only if RSI > 50 AND price > 200-bar SMA
+//   HIGH → No new longs; SELL any existing long
+//
+// Alerts fire on regime transitions AND entry/exit signals, sending a JSON
+// payload to your webhook URL.
+//
+// SETUP
+// -----
+// 1. Open TradingView chart → Indicators → "Open Pine Script Editor"
+// 2. Paste this entire script and click "Add to chart"
+// 3. In "Inputs", set WEBHOOK_URL to your ngrok/VPS URL + "/alert"
+//    e.g. https://abc123.ngrok.io/alert
+// 4. Set WEBHOOK_SECRET to match WEBHOOK_SECRET in your .env file
+// 5. Right-click any signal arrow → "Add alert on…"
+//    OR use the Alerts panel:
+//      - Condition: "regime_trader" → "BUY Signal" (or SELL)
+//      - Webhook URL: paste your endpoint URL
+//      - Message: leave as-is (the script sets alert() message in JSON)
+//    TradingView Pro+ required for webhook delivery
+// ============================================================================
+
+//@version=5
+indicator(
+    title       = "Regime Trader",
+    shorttitle  = "RT",
+    overlay     = true,
+    max_labels_count = 500
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+
+var string GRP_REGIME  = "Volatility Regime"
+var string GRP_TREND   = "Trend Filter"
+var string GRP_RISK    = "Risk"
+var string GRP_WEBHOOK = "Webhook"
+
+// Regime detection
+atr_length       = input.int(14,   "ATR Length",              group=GRP_REGIME, minval=1)
+low_vol_pct      = input.float(0.8, "Low-Vol ATR/Close %",    group=GRP_REGIME, minval=0.1, maxval=5.0, step=0.1)
+high_vol_pct     = input.float(2.0, "High-Vol ATR/Close %",   group=GRP_REGIME, minval=0.5, maxval=10.0, step=0.1)
+vol_smooth       = input.int(5,    "Vol Smooth Periods",       group=GRP_REGIME, minval=1)
+
+// Trend filters
+ema_fast         = input.int(20,   "EMA Fast",                group=GRP_TREND, minval=5)
+ema_slow         = input.int(50,   "EMA Slow",                group=GRP_TREND, minval=10)
+sma_trend        = input.int(200,  "SMA Trend Filter",         group=GRP_TREND, minval=50)
+rsi_length       = input.int(14,   "RSI Length",              group=GRP_TREND, minval=2)
+rsi_mid          = input.int(50,   "RSI Midline",             group=GRP_TREND, minval=30, maxval=70)
+
+// Risk / position
+default_stop_pct = input.float(3.0, "Default Stop %",         group=GRP_RISK,  minval=0.5, maxval=15.0, step=0.5)
+default_tp_mult  = input.float(2.0, "Take-Profit R Multiple", group=GRP_RISK,  minval=1.0, maxval=10.0, step=0.5)
+
+// Webhook config
+webhook_secret   = input.string("YOUR_WEBHOOK_SECRET", "Webhook Secret",  group=GRP_WEBHOOK)
+strategy_name    = input.string("regime_trader_v1",    "Strategy Name",   group=GRP_WEBHOOK)
+show_labels      = input.bool(true, "Show Signal Labels")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Calculations
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ATR-based volatility ratio
+atr_raw    = ta.atr(atr_length)
+atr_ratio  = ta.sma(atr_raw / close * 100.0, vol_smooth)
+
+// Regime classification
+low_vol  = atr_ratio <= low_vol_pct
+high_vol = atr_ratio >= high_vol_pct
+mid_vol  = not low_vol and not high_vol
+
+// Trend indicators
+ema_f    = ta.ema(close, ema_fast)
+ema_s    = ta.ema(close, ema_slow)
+sma_t    = ta.sma(close, sma_trend)
+rsi      = ta.rsi(close, rsi_length)
+
+// Crossovers
+ema_cross_up   = ta.crossover(ema_f, ema_s)
+ema_cross_down = ta.crossunder(ema_f, ema_s)
+
+// Regime state as integer for colour mapping
+// 1 = Low Vol, 2 = Mid Vol, 3 = High Vol
+regime_int = high_vol ? 3 : mid_vol ? 2 : 1
+
+// Background colour by regime
+bgcolor(
+    high_vol ? color.new(color.red,    90) :
+    mid_vol  ? color.new(color.orange, 93) :
+               color.new(color.green,  93),
+    title = "Regime Background"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entry / Exit signals
+// ─────────────────────────────────────────────────────────────────────────────
+
+// BUY conditions
+buy_low  = low_vol  and ema_cross_up
+buy_mid  = mid_vol  and ema_cross_up and rsi > rsi_mid and close > sma_t
+buy_sig  = buy_low or buy_mid
+
+// SELL / exit conditions
+sell_high     = high_vol  and close < ema_s                          // high vol breakdown
+sell_cross    = ema_cross_down                                        // EMA cross down
+sell_sig      = sell_high or sell_cross
+
+// Regime transition signals (for informational alerts)
+was_high_vol  = high_vol[1]
+entered_high  = high_vol and not was_high_vol
+exited_high   = not high_vol and was_high_vol
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stop / take-profit levels
+// ─────────────────────────────────────────────────────────────────────────────
+
+stop_price   = buy_sig ? close * (1 - default_stop_pct / 100) : na
+stop_dist    = close - stop_price
+tp_price     = buy_sig ? close + stop_dist * default_tp_mult : na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plot signals
+// ─────────────────────────────────────────────────────────────────────────────
+
+plotshape(
+    buy_sig  and show_labels,
+    title     = "BUY Signal",
+    location  = location.belowbar,
+    style     = shape.triangleup,
+    color     = color.new(color.green, 0),
+    size      = size.small,
+    text      = "BUY"
+)
+
+plotshape(
+    sell_sig and show_labels,
+    title     = "SELL Signal",
+    location  = location.abovebar,
+    style     = shape.triangledown,
+    color     = color.new(color.red, 0),
+    size      = size.small,
+    text      = "SELL"
+)
+
+plotshape(
+    entered_high and show_labels,
+    title     = "High Vol Entered",
+    location  = location.abovebar,
+    style     = shape.xcross,
+    color     = color.new(color.orange, 0),
+    size      = size.tiny,
+    text      = "HIGH VOL"
+)
+
+// EMA plots
+plot(ema_f, "EMA Fast", color=color.new(color.blue,   20), linewidth=1)
+plot(ema_s, "EMA Slow", color=color.new(color.purple, 20), linewidth=2)
+plot(sma_t, "SMA 200",  color=color.new(color.gray,   30), linewidth=1)
+
+// Regime label (top-right)
+var label regime_label = na
+label.delete(regime_label)
+regime_text  = high_vol ? "HIGH VOL" : mid_vol ? "MID VOL" : "LOW VOL"
+regime_color = high_vol ? color.red : mid_vol ? color.orange : color.green
+regime_label := label.new(
+    x     = bar_index,
+    y     = high,
+    text  = regime_text,
+    color = color.new(regime_color, 70),
+    textcolor = regime_color,
+    style = label.style_label_left,
+    size  = size.small
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhook alert JSON builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Regime label for logging
+regime_str = high_vol ? "HIGH_VOL" : mid_vol ? "MID_VOL" : "LOW_VOL"
+
+// BUY payload
+buy_msg = '{"symbol":"' + syminfo.ticker +
+          '","action":"buy"' +
+          ',"price":' + str.tostring(close, "#.####") +
+          ',"stop":' + str.tostring(close * (1 - default_stop_pct / 100), "#.####") +
+          ',"take_profit":' + str.tostring(close + (close * default_stop_pct / 100) * default_tp_mult, "#.####") +
+          ',"timeframe":"' + timeframe.period + '"' +
+          ',"strategy":"' + strategy_name + '"' +
+          ',"regime":"' + regime_str + '"' +
+          ',"secret":"' + webhook_secret + '"}'
+
+// SELL payload
+sell_msg = '{"symbol":"' + syminfo.ticker +
+           '","action":"sell"' +
+           ',"price":' + str.tostring(close, "#.####") +
+           ',"stop":0' +
+           ',"take_profit":0' +
+           ',"timeframe":"' + timeframe.period + '"' +
+           ',"strategy":"' + strategy_name + '"' +
+           ',"regime":"' + regime_str + '"' +
+           ',"secret":"' + webhook_secret + '"}'
+
+// High-vol regime change payload (informational — no order)
+hv_msg = '{"symbol":"' + syminfo.ticker +
+         '","action":"flat"' +
+         ',"price":' + str.tostring(close, "#.####") +
+         ',"stop":0,"take_profit":0' +
+         ',"timeframe":"' + timeframe.period + '"' +
+         ',"strategy":"' + strategy_name + '"' +
+         ',"regime":"HIGH_VOL"' +
+         ',"secret":"' + webhook_secret + '"}'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alert conditions
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TradingView fires the alert when the condition is true.
+// In the alert dialog: enable "Webhook URL" and paste your server URL.
+
+alertcondition(buy_sig,    title="BUY Signal",         message="{{strategy.order.alert_message}}")
+alertcondition(sell_sig,   title="SELL Signal",         message="{{strategy.order.alert_message}}")
+alertcondition(entered_high, title="High Vol Regime",   message="{{strategy.order.alert_message}}")
+
+// Proper JSON webhook alerts (use these in "Once Per Bar Close" mode)
+if buy_sig
+    alert(buy_msg,  alert.freq_once_per_bar_close)
+
+if sell_sig
+    alert(sell_msg, alert.freq_once_per_bar_close)
+
+if entered_high
+    alert(hv_msg,   alert.freq_once_per_bar_close)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Table: live regime stats (bottom-right)
+// ─────────────────────────────────────────────────────────────────────────────
+
+var table stats = table.new(
+    position.bottom_right, 2, 5,
+    bgcolor      = color.new(color.black, 80),
+    border_color = color.new(color.gray, 60),
+    border_width = 1
+)
+
+if barstate.islast
+    table.cell(stats, 0, 0, "Regime",     text_color=color.white,  text_size=size.small)
+    table.cell(stats, 1, 0, regime_text,  text_color=regime_color, text_size=size.small)
+    table.cell(stats, 0, 1, "ATR/Close",  text_color=color.white,  text_size=size.small)
+    table.cell(stats, 1, 1, str.tostring(atr_ratio, "#.##") + "%", text_color=color.white, text_size=size.small)
+    table.cell(stats, 0, 2, "EMA Fast",   text_color=color.white,  text_size=size.small)
+    table.cell(stats, 1, 2, str.tostring(ema_f, "#.##"),  text_color=color.blue, text_size=size.small)
+    table.cell(stats, 0, 3, "RSI",        text_color=color.white,  text_size=size.small)
+    table.cell(stats, 1, 3, str.tostring(rsi, "#.#"),     text_color=rsi > rsi_mid ? color.green : color.red, text_size=size.small)
+    table.cell(stats, 0, 4, "Signal",     text_color=color.white,  text_size=size.small)
+    signal_text  = buy_sig ? "▲ BUY" : sell_sig ? "▼ SELL" : "— HOLD"
+    signal_color = buy_sig ? color.green : sell_sig ? color.red : color.gray
+    table.cell(stats, 1, 4, signal_text, text_color=signal_color, text_size=size.small)
