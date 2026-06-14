@@ -69,6 +69,7 @@ max_daily_loss_pct  = input.float(-3.0, "Max Daily Loss %",       group=GRP_RISK
 // Webhook config
 webhook_secret   = input.string("YOUR_WEBHOOK_SECRET", "Webhook Secret",  group=GRP_WEBHOOK)
 strategy_name    = input.string("regime_trader_v1",    "Strategy Name",   group=GRP_WEBHOOK)
+account_name     = input.string("Demo NQ",             "Account Name",    group=GRP_WEBHOOK)
 show_labels      = input.bool(true, "Show Signal Labels")
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,7 +216,8 @@ _portfolio_fields =
     ',"daily_halted":' + (daily_halted ? "true" : "false")
 
 buy_msg =
-    '{"symbol":"'    + syminfo.ticker +
+    '{"account":"'   + account_name +
+    '","symbol":"'   + syminfo.ticker +
     '","action":"buy"' +
     ',"price":'      + str.tostring(close,    "#.####") +
     ',"stop":'       + str.tostring(stop_val, "#.####") +
@@ -227,7 +229,8 @@ buy_msg =
     _portfolio_fields + '}'
 
 sell_msg =
-    '{"symbol":"'    + syminfo.ticker +
+    '{"account":"'   + account_name +
+    '","symbol":"'   + syminfo.ticker +
     '","action":"sell"' +
     ',"price":'      + str.tostring(close, "#.####") +
     ',"stop":0,"take_profit":0' +
@@ -238,7 +241,8 @@ sell_msg =
     _portfolio_fields + '}'
 
 hv_msg =
-    '{"symbol":"'    + syminfo.ticker +
+    '{"account":"'   + account_name +
+    '","symbol":"'   + syminfo.ticker +
     '","action":"flat"' +
     ',"price":'      + str.tostring(close, "#.####") +
     ',"stop":0,"take_profit":0' +
