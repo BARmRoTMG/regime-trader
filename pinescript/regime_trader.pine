@@ -6,251 +6,127 @@
 //           strategy.entry / strategy.close, and fire webhook alerts to the
 //           regime-trader FastAPI server.
 //
-// ALERT PAYLOAD FIELDS
-// --------------------
-//   symbol, action, price, stop, take_profit, timeframe, strategy,
-//   regime, secret, strategy_equity, strategy_pnl, position_size, open_trades
-//
-// DAILY-LOSS GATE
-// ---------------
-//   Tracks each session's opening equity.  If the intraday P&L drops below
-//   max_daily_loss_pct, new entries are blocked for the rest of the session.
-//
 // SETUP
-// -----
-// 1. Open TradingView → Strategy Tester panel → add this script to chart
-// 2. In "Inputs", set your Webhook Secret to match .env WEBHOOK_SECRET
-// 3. Create an alert: Condition = "regime_trader", Message = "{{strategy.order.alert_message}}"
-//    OR just enable the alert() calls below by setting "Alert on…" → "Any alert() call"
-// 4. Set Webhook URL to your ngrok/VPS endpoint + "/webhook/alert"
+// 1. Add this script to a TradingView chart
+// 2. In Inputs, set Webhook Secret to match your .env WEBHOOK_SECRET
+// 3. Create alert: Condition = "Regime Trader" -> "Any alert() call"
+// 4. Set Webhook URL to your ngrok URL + "/webhook/alert"
 // ============================================================================
 
 //@version=5
-strategy("Regime Trader", shorttitle="RT", overlay=true,
-     default_qty_type=strategy.fixed, default_qty_value=1,
-     initial_capital=100000,
-     commission_type=strategy.commission.cash_per_contract,
-     commission_value=2.0)
+strategy("Regime Trader", shorttitle="RT", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=100000, commission_type=strategy.commission.cash_per_contract, commission_value=2.0)
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Input groups
-// ─────────────────────────────────────────────────────────────────────────────
-
 var string GRP_REGIME  = "Volatility Regime"
 var string GRP_TREND   = "Trend Filter"
 var string GRP_RISK    = "Risk"
 var string GRP_WEBHOOK = "Webhook"
 
 // Regime detection
-atr_length       = input.int(14,    "ATR Length",             group=GRP_REGIME, minval=1)
-low_vol_pct      = input.float(0.8, "Low-Vol ATR/Close %",   group=GRP_REGIME, minval=0.1, maxval=5.0,  step=0.1)
-high_vol_pct     = input.float(2.0, "High-Vol ATR/Close %",  group=GRP_REGIME, minval=0.5, maxval=10.0, step=0.1)
-vol_smooth       = input.int(5,     "Vol Smooth Periods",     group=GRP_REGIME, minval=1)
+atr_length      = input.int(14,    "ATR Length",            group=GRP_REGIME, minval=1)
+low_vol_pct     = input.float(0.8, "Low-Vol ATR/Close %",  group=GRP_REGIME, minval=0.1, maxval=5.0,  step=0.1)
+high_vol_pct    = input.float(2.0, "High-Vol ATR/Close %", group=GRP_REGIME, minval=0.5, maxval=10.0, step=0.1)
+vol_smooth      = input.int(5,     "Vol Smooth Periods",    group=GRP_REGIME, minval=1)
 
 // Trend filters
-ema_fast         = input.int(20,    "EMA Fast",               group=GRP_TREND, minval=5)
-ema_slow         = input.int(50,    "EMA Slow",               group=GRP_TREND, minval=10)
-sma_trend        = input.int(200,   "SMA Trend Filter",       group=GRP_TREND, minval=50)
-rsi_length       = input.int(14,    "RSI Length",             group=GRP_TREND, minval=2)
-rsi_mid          = input.int(50,    "RSI Midline",            group=GRP_TREND, minval=30, maxval=70)
+ema_fast        = input.int(20,  "EMA Fast",           group=GRP_TREND, minval=5)
+ema_slow        = input.int(50,  "EMA Slow",           group=GRP_TREND, minval=10)
+sma_trend       = input.int(200, "SMA Trend Filter",   group=GRP_TREND, minval=50)
+rsi_length      = input.int(14,  "RSI Length",         group=GRP_TREND, minval=2)
+rsi_mid         = input.int(50,  "RSI Midline",        group=GRP_TREND, minval=30, maxval=70)
 
 // Risk / position
-default_stop_pct    = input.float(3.0,  "Default Stop %",         group=GRP_RISK, minval=0.5, maxval=15.0, step=0.5)
-default_tp_mult     = input.float(2.0,  "Take-Profit R Multiple", group=GRP_RISK, minval=1.0, maxval=10.0, step=0.5)
-max_daily_loss_pct  = input.float(-3.0, "Max Daily Loss %",       group=GRP_RISK, minval=-20.0, maxval=-0.1, step=0.5)
+default_stop_pct   = input.float(3.0,  "Default Stop %",         group=GRP_RISK, minval=0.5, maxval=15.0, step=0.5)
+default_tp_mult    = input.float(2.0,  "Take-Profit R Multiple", group=GRP_RISK, minval=1.0, maxval=10.0, step=0.5)
+max_daily_loss_pct = input.float(-3.0, "Max Daily Loss %",       group=GRP_RISK, minval=-20.0, maxval=-0.1, step=0.5)
 
 // Webhook config
-webhook_secret   = input.string("YOUR_WEBHOOK_SECRET", "Webhook Secret",  group=GRP_WEBHOOK)
-strategy_name    = input.string("regime_trader_v1",    "Strategy Name",   group=GRP_WEBHOOK)
-account_name     = input.string("Demo NQ",             "Account Name",    group=GRP_WEBHOOK)
-show_labels      = input.bool(true, "Show Signal Labels")
+webhook_secret  = input.string("YOUR_WEBHOOK_SECRET", "Webhook Secret", group=GRP_WEBHOOK)
+strategy_name   = input.string("regime_trader_v1",    "Strategy Name",  group=GRP_WEBHOOK)
+account_name    = input.string("Demo NQ",             "Account Name",   group=GRP_WEBHOOK)
+show_labels     = input.bool(true, "Show Signal Labels")
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Calculations
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ATR-based volatility ratio
 atr_raw   = ta.atr(atr_length)
 atr_ratio = ta.sma(atr_raw / close * 100.0, vol_smooth)
 
-// Regime classification
 low_vol  = atr_ratio <= low_vol_pct
 high_vol = atr_ratio >= high_vol_pct
 mid_vol  = not low_vol and not high_vol
 
-// Trend indicators
 ema_f = ta.ema(close, ema_fast)
 ema_s = ta.ema(close, ema_slow)
 sma_t = ta.sma(close, sma_trend)
 rsi   = ta.rsi(close, rsi_length)
 
-// Crossovers
 ema_cross_up   = ta.crossover(ema_f, ema_s)
 ema_cross_down = ta.crossunder(ema_f, ema_s)
 
-// Regime background colour
-var _regime_bg = color.new(color.green, 93)
-_regime_bg := high_vol ? color.new(color.red, 90) : mid_vol ? color.new(color.orange, 93) : color.new(color.green, 93)
-bgcolor(_regime_bg, title="Regime Background")
+// Regime background
+var _bg = color.new(color.green, 93)
+_bg := high_vol ? color.new(color.red, 90) : mid_vol ? color.new(color.orange, 93) : color.new(color.green, 93)
+bgcolor(_bg, title="Regime Background")
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Daily-loss gate
-// ─────────────────────────────────────────────────────────────────────────────
-
 var float session_open_equity = na
-
-// Detect new calendar day
 new_day = ta.change(time("D")) != 0
 if new_day or na(session_open_equity)
     session_open_equity := strategy.equity
 
-// How far we are below the session-open equity (as a fraction)
 daily_pnl_pct = session_open_equity > 0 ? (strategy.equity - session_open_equity) / session_open_equity : 0.0
+daily_halted  = daily_pnl_pct <= (max_daily_loss_pct / 100.0)
 
-daily_halted = daily_pnl_pct <= (max_daily_loss_pct / 100.0)
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Entry / exit signals
-// ─────────────────────────────────────────────────────────────────────────────
-
-buy_low  = low_vol and ema_cross_up and not daily_halted
-buy_mid  = mid_vol and ema_cross_up and rsi > rsi_mid and close > sma_t and not daily_halted
+buy_low  = low_vol  and ema_cross_up  and not daily_halted
+buy_mid  = mid_vol  and ema_cross_up  and rsi > rsi_mid and close > sma_t and not daily_halted
 buy_sig  = buy_low or buy_mid
-
 sell_high  = high_vol and close < ema_s
 sell_cross = ema_cross_down
 sell_sig   = sell_high or sell_cross
+was_high_vol = high_vol[1]
+entered_high = high_vol and not was_high_vol
 
-// Regime transitions
-was_high_vol  = high_vol[1]
-entered_high  = high_vol and not was_high_vol
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Strategy orders
-// ─────────────────────────────────────────────────────────────────────────────
-
 if buy_sig and strategy.position_size == 0
     strategy.entry("Long", strategy.long)
 
 if sell_sig and strategy.position_size > 0
     strategy.close("Long")
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Stop / take-profit
-// ─────────────────────────────────────────────────────────────────────────────
-
-stop_dist = close * (default_stop_pct / 100)
+stop_dist  = close * (default_stop_pct / 100)
 stop_price = buy_sig ? close - stop_dist : na
 tp_price   = buy_sig ? close + stop_dist * default_tp_mult : na
 
 if strategy.position_size > 0
-    strategy.exit("TP/SL", "Long",
-        stop  = strategy.position_avg_price * (1 - default_stop_pct / 100),
-        limit = strategy.position_avg_price * (1 + (default_stop_pct / 100) * default_tp_mult))
+    strategy.exit("TP/SL", "Long", stop=strategy.position_avg_price * (1 - default_stop_pct / 100), limit=strategy.position_avg_price * (1 + (default_stop_pct / 100) * default_tp_mult))
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Plot signals
-// ─────────────────────────────────────────────────────────────────────────────
+plotshape(buy_sig and show_labels, title="BUY Signal", location=location.belowbar, style=shape.triangleup, color=color.new(color.green, 0), size=size.small, text="BUY")
+plotshape(sell_sig and show_labels, title="SELL Signal", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small, text="SELL")
+plotshape(daily_halted and show_labels, title="Daily Halted", location=location.abovebar, style=shape.xcross, color=color.new(color.red, 0), size=size.tiny, text="HALTED")
 
-plotshape(
-    buy_sig and show_labels,
-    title    = "BUY Signal",
-    location = location.belowbar,
-    style    = shape.triangleup,
-    color    = color.new(color.green, 0),
-    size     = size.small,
-    text     = "BUY"
-)
-
-plotshape(
-    sell_sig and show_labels,
-    title    = "SELL Signal",
-    location = location.abovebar,
-    style    = shape.triangledown,
-    color    = color.new(color.red, 0),
-    size     = size.small,
-    text     = "SELL"
-)
-
-plotshape(
-    daily_halted and show_labels,
-    title    = "Daily Halted",
-    location = location.abovebar,
-    style    = shape.xcross,
-    color    = color.new(color.red, 0),
-    size     = size.tiny,
-    text     = "HALTED"
-)
-
-plot(ema_f, "EMA Fast", color=color.new(color.blue,   20), linewidth=1)
+plot(ema_f, "EMA Fast", color=color.new(color.blue, 20), linewidth=1)
 plot(ema_s, "EMA Slow", color=color.new(color.purple, 20), linewidth=2)
-plot(sma_t, "SMA 200",  color=color.new(color.gray,   30), linewidth=1)
+plot(sma_t, "SMA 200",  color=color.new(color.gray, 30), linewidth=1)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Webhook payload builders  — strategy.* vars available because this is a strategy()
-// ─────────────────────────────────────────────────────────────────────────────
+// Webhook payload builders
+regime_str = high_vol ? "HIGH_VOL" : mid_vol ? "MID_VOL" : "LOW_VOL"
+stop_val   = close * (1 - default_stop_pct / 100)
+tp_val     = close + (close * default_stop_pct / 100) * default_tp_mult
 
-regime_str     = high_vol ? "HIGH_VOL" : mid_vol ? "MID_VOL" : "LOW_VOL"
-stop_val       = close * (1 - default_stop_pct / 100)
-tp_val         = close + (close * default_stop_pct / 100) * default_tp_mult
+_pf = ',"strategy_equity":' + str.tostring(strategy.equity, "#.##") + ',"strategy_pnl":' + str.tostring(strategy.netprofit, "#.##") + ',"position_size":' + str.tostring(strategy.position_size, "#.####") + ',"open_trades":' + str.tostring(strategy.opentrades) + ',"daily_pnl_pct":' + str.tostring(daily_pnl_pct * 100, "#.##") + ',"daily_halted":' + (daily_halted ? "true" : "false")
 
-// Shared portfolio fields appended to every payload
-// Field names match what api/routes/webhook.py reads (strategy_equity, strategy_pnl)
-_portfolio_fields =
-    ',"strategy_equity":' + str.tostring(strategy.equity,    "#.##") +
-    ',"strategy_pnl":'    + str.tostring(strategy.netprofit, "#.##") +
-    ',"position_size":'+ str.tostring(strategy.position_size, "#.####") +
-    ',"open_trades":'  + str.tostring(strategy.opentrades) +
-    ',"daily_pnl_pct":'+ str.tostring(daily_pnl_pct * 100,   "#.##") +
-    ',"daily_halted":' + (daily_halted ? "true" : "false")
+buy_msg  = '{"account":"' + account_name + '","symbol":"' + syminfo.ticker + '","action":"buy","price":' + str.tostring(close, "#.####") + ',"stop":' + str.tostring(stop_val, "#.####") + ',"take_profit":' + str.tostring(tp_val, "#.####") + ',"timeframe":"' + timeframe.period + '","strategy":"' + strategy_name + '","regime":"' + regime_str + '","secret":"' + webhook_secret + '"' + _pf + '}'
+sell_msg = '{"account":"' + account_name + '","symbol":"' + syminfo.ticker + '","action":"sell","price":' + str.tostring(close, "#.####") + ',"stop":0,"take_profit":0,"timeframe":"' + timeframe.period + '","strategy":"' + strategy_name + '","regime":"' + regime_str + '","secret":"' + webhook_secret + '"' + _pf + '}'
+hv_msg   = '{"account":"' + account_name + '","symbol":"' + syminfo.ticker + '","action":"flat","price":' + str.tostring(close, "#.####") + ',"stop":0,"take_profit":0,"timeframe":"' + timeframe.period + '","strategy":"' + strategy_name + '","regime":"HIGH_VOL","secret":"' + webhook_secret + '"' + _pf + '}'
 
-buy_msg =
-    '{"account":"'   + account_name +
-    '","symbol":"'   + syminfo.ticker +
-    '","action":"buy"' +
-    ',"price":'      + str.tostring(close,    "#.####") +
-    ',"stop":'       + str.tostring(stop_val, "#.####") +
-    ',"take_profit":'+ str.tostring(tp_val,   "#.####") +
-    ',"timeframe":"' + timeframe.period + '"' +
-    ',"strategy":"'  + strategy_name + '"' +
-    ',"regime":"'    + regime_str + '"' +
-    ',"secret":"'    + webhook_secret + '"' +
-    _portfolio_fields + '}'
-
-sell_msg =
-    '{"account":"'   + account_name +
-    '","symbol":"'   + syminfo.ticker +
-    '","action":"sell"' +
-    ',"price":'      + str.tostring(close, "#.####") +
-    ',"stop":0,"take_profit":0' +
-    ',"timeframe":"' + timeframe.period + '"' +
-    ',"strategy":"'  + strategy_name + '"' +
-    ',"regime":"'    + regime_str + '"' +
-    ',"secret":"'    + webhook_secret + '"' +
-    _portfolio_fields + '}'
-
-hv_msg =
-    '{"account":"'   + account_name +
-    '","symbol":"'   + syminfo.ticker +
-    '","action":"flat"' +
-    ',"price":'      + str.tostring(close, "#.####") +
-    ',"stop":0,"take_profit":0' +
-    ',"timeframe":"' + timeframe.period + '"' +
-    ',"strategy":"'  + strategy_name + '"' +
-    ',"regime":"HIGH_VOL"' +
-    ',"secret":"'    + webhook_secret + '"' +
-    _portfolio_fields + '}'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Alert conditions (for TradingView alert dialog)
-// ─────────────────────────────────────────────────────────────────────────────
-
-alertcondition(buy_sig,     title="BUY Signal",       message="{{strategy.order.alert_message}}")
-alertcondition(sell_sig,    title="SELL Signal",       message="{{strategy.order.alert_message}}")
+// Alert conditions
+alertcondition(buy_sig,      title="BUY Signal",      message="{{strategy.order.alert_message}}")
+alertcondition(sell_sig,     title="SELL Signal",      message="{{strategy.order.alert_message}}")
 alertcondition(entered_high, title="High Vol Regime",  message="{{strategy.order.alert_message}}")
 alertcondition(daily_halted, title="Daily Loss Halt",  message="{{strategy.order.alert_message}}")
 
-// alert() calls fire the webhook directly (set "Once Per Bar Close")
 if buy_sig
     alert(buy_msg,  alert.freq_once_per_bar_close)
 
@@ -260,32 +136,24 @@ if sell_sig
 if entered_high
     alert(hv_msg,   alert.freq_once_per_bar_close)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stats table (bottom-right)
-// ─────────────────────────────────────────────────────────────────────────────
-
-var table stats = table.new(
-    position.bottom_right, 2, 7,
-    bgcolor      = color.new(color.black, 80),
-    border_color = color.new(color.gray, 60),
-    border_width = 1
-)
+// Stats table
+var table stats = table.new(position.bottom_right, 2, 7, bgcolor=color.new(color.black, 80), border_color=color.new(color.gray, 60), border_width=1)
 
 regime_text  = high_vol ? "HIGH VOL" : mid_vol ? "MID VOL" : "LOW VOL"
 regime_color = high_vol ? color.red : mid_vol ? color.orange : color.green
 
 if barstate.islast
-    table.cell(stats, 0, 0, "Regime",      text_color=color.white,  text_size=size.small)
-    table.cell(stats, 1, 0, regime_text,   text_color=regime_color, text_size=size.small)
-    table.cell(stats, 0, 1, "ATR/Close",   text_color=color.white,  text_size=size.small)
+    table.cell(stats, 0, 0, "Regime",    text_color=color.white,  text_size=size.small)
+    table.cell(stats, 1, 0, regime_text, text_color=regime_color, text_size=size.small)
+    table.cell(stats, 0, 1, "ATR/Close", text_color=color.white,  text_size=size.small)
     table.cell(stats, 1, 1, str.tostring(atr_ratio, "#.##") + "%", text_color=color.white, text_size=size.small)
-    table.cell(stats, 0, 2, "RSI",         text_color=color.white,  text_size=size.small)
+    table.cell(stats, 0, 2, "RSI",       text_color=color.white,  text_size=size.small)
     table.cell(stats, 1, 2, str.tostring(rsi, "#.#"), text_color=rsi > rsi_mid ? color.green : color.red, text_size=size.small)
-    table.cell(stats, 0, 3, "Equity",      text_color=color.white,  text_size=size.small)
+    table.cell(stats, 0, 3, "Equity",    text_color=color.white,  text_size=size.small)
     table.cell(stats, 1, 3, "$" + str.tostring(strategy.equity, "#,###"), text_color=color.white, text_size=size.small)
-    table.cell(stats, 0, 4, "Net P&L",     text_color=color.white,  text_size=size.small)
+    table.cell(stats, 0, 4, "Net P&L",   text_color=color.white,  text_size=size.small)
     table.cell(stats, 1, 4, "$" + str.tostring(strategy.netprofit, "#,###"), text_color=strategy.netprofit >= 0 ? color.green : color.red, text_size=size.small)
-    table.cell(stats, 0, 5, "Daily P&L",   text_color=color.white,  text_size=size.small)
+    table.cell(stats, 0, 5, "Daily P&L", text_color=color.white,  text_size=size.small)
     table.cell(stats, 1, 5, str.tostring(daily_pnl_pct * 100, "#.##") + "%", text_color=daily_halted ? color.red : color.white, text_size=size.small)
-    table.cell(stats, 0, 6, "Gate",        text_color=color.white,  text_size=size.small)
+    table.cell(stats, 0, 6, "Gate",      text_color=color.white,  text_size=size.small)
     table.cell(stats, 1, 6, daily_halted ? "HALTED" : "OPEN", text_color=daily_halted ? color.red : color.green, text_size=size.small)
