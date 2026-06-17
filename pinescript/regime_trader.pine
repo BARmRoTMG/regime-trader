@@ -89,12 +89,9 @@ ema_cross_up   = ta.crossover(ema_f, ema_s)
 ema_cross_down = ta.crossunder(ema_f, ema_s)
 
 // Regime background colour
-bgcolor(
-    high_vol ? color.new(color.red,    90) :
-    mid_vol  ? color.new(color.orange, 93) :
-               color.new(color.green,  93),
-    title = "Regime Background"
-)
+var _regime_bg = color.new(color.green, 93)
+_regime_bg := high_vol ? color.new(color.red, 90) : mid_vol ? color.new(color.orange, 93) : color.new(color.green, 93)
+bgcolor(_regime_bg, title="Regime Background")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Daily-loss gate
@@ -108,9 +105,7 @@ if new_day or na(session_open_equity)
     session_open_equity := strategy.equity
 
 // How far we are below the session-open equity (as a fraction)
-daily_pnl_pct = not na(session_open_equity) and session_open_equity != 0
-    ? (strategy.equity - session_open_equity) / session_open_equity
-    : 0.0
+daily_pnl_pct = session_open_equity > 0 ? (strategy.equity - session_open_equity) / session_open_equity : 0.0
 
 daily_halted = daily_pnl_pct <= (max_daily_loss_pct / 100.0)
 
