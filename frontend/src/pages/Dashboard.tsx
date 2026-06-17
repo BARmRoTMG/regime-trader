@@ -13,6 +13,7 @@ import { clsx } from 'clsx'
 import { useAccount } from '../lib/context'
 import { getPortfolio, getEquityCurve, listSignals } from '../lib/api'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { fmtMoney, fmtTime, fmtDate } from '../lib/format'
 
 function regimeBadge(regime?: string) {
   if (!regime) return <span className="text-slate-500 text-sm">—</span>
@@ -59,18 +60,6 @@ function cbBadge(cb: string) {
   )
 }
 
-function fmtMoney(n?: number | null) {
-  if (n == null) return '—'
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-}
-
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
 
 export default function Dashboard() {
   const { accountId } = useAccount()

@@ -104,8 +104,9 @@ async def tradingview_alert(
     take_profit    = _float(payload.get("take_profit"))
     strategy_name  = str(payload.get("strategy", "unknown"))
     regime         = str(payload.get("regime", "")).upper() or None
-    strat_equity   = _float(payload.get("strategy_equity"))
-    strat_pnl      = _float(payload.get("strategy_pnl"))
+    # Accept both "strategy_equity" (Pine Script) and "equity" (manual test payloads)
+    strat_equity   = _float(payload.get("strategy_equity") or payload.get("equity"))
+    strat_pnl      = _float(payload.get("strategy_pnl")    or payload.get("netprofit"))
     position_size  = _float(payload.get("position_size"))
 
     if not symbol:

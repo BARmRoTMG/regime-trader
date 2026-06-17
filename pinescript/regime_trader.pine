@@ -9,7 +9,7 @@
 // ALERT PAYLOAD FIELDS
 // --------------------
 //   symbol, action, price, stop, take_profit, timeframe, strategy,
-//   regime, secret, equity, netprofit, position_size, open_trades
+//   regime, secret, strategy_equity, strategy_pnl, position_size, open_trades
 //
 // DAILY-LOSS GATE
 // ---------------
@@ -207,9 +207,10 @@ stop_val       = close * (1 - default_stop_pct / 100)
 tp_val         = close + (close * default_stop_pct / 100) * default_tp_mult
 
 // Shared portfolio fields appended to every payload
+// Field names match what api/routes/webhook.py reads (strategy_equity, strategy_pnl)
 _portfolio_fields =
-    ',"equity":'       + str.tostring(strategy.equity,        "#.##") +
-    ',"netprofit":'    + str.tostring(strategy.netprofit,     "#.##") +
+    ',"strategy_equity":' + str.tostring(strategy.equity,    "#.##") +
+    ',"strategy_pnl":'    + str.tostring(strategy.netprofit, "#.##") +
     ',"position_size":'+ str.tostring(strategy.position_size, "#.####") +
     ',"open_trades":'  + str.tostring(strategy.opentrades) +
     ',"daily_pnl_pct":'+ str.tostring(daily_pnl_pct * 100,   "#.##") +

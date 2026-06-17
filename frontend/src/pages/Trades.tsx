@@ -3,24 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import { useAccount } from '../lib/context'
 import { listTrades, getTradeSummary } from '../lib/api'
+import { fmtMoney, fmtPct, fmtDate } from '../lib/format'
 
 const PAGE_SIZE = 20
 
 type Filter = 'all' | 'winners' | 'losers'
-
-function fmtMoney(n?: number | null) {
-  if (n == null) return '—'
-  const sign = n < 0 ? '-' : ''
-  return `${sign}$${Math.abs(n).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
-
-function fmtPct(n?: number | null) {
-  if (n == null) return '—'
-  return `${(n * 100).toFixed(1)}%`
-}
 
 export default function Trades() {
   const { accountId } = useAccount()
@@ -209,11 +196,7 @@ export default function Trades() {
                       {t.regime_at_entry ?? '—'}
                     </td>
                     <td className="px-4 py-2 text-slate-500 text-xs">
-                      {new Date(t.opened_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: '2-digit',
-                      })}
+                      {fmtDate(t.opened_at)}
                     </td>
                     <td className="px-4 py-2 text-right text-slate-500 text-xs">
                       {t.duration_mins != null ? `${t.duration_mins}m` : '—'}
