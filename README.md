@@ -2,6 +2,8 @@
 
 A full-stack trading dashboard that receives TradingView Pine Script webhook alerts, logs them to SQLite, and displays live equity, signals, open positions, and trade history in a dark React dashboard.
 
+> **First time here?** See [HOWTO_START.md](HOWTO_START.md) for a detailed step-by-step guide covering every click, from cloning to your first live TradingView alert.
+
 **Architecture:**
 ```
 TradingView Pine Script strategy
@@ -127,19 +129,19 @@ Send a fake webhook alert using PowerShell to verify the full pipeline:
 ```powershell
 # BUY signal
 $body = @{
-    account       = "Demo NQ"
-    symbol        = "NQM5"
-    action        = "buy"
-    contracts     = 2
-    price         = 19420.0
-    stop          = 19250.0
-    take_profit   = 19700.0
-    strategy      = "regime_trader_v1"
-    regime        = "LOW_VOL"
-    equity        = 102000.0
-    netprofit     = 2000.0
-    position_size = 2
-    secret        = "any-random-secret-string"
+    account          = "Demo NQ"
+    symbol           = "NQM5"
+    action           = "buy"
+    contracts        = 2
+    price            = 19420.0
+    stop             = 19250.0
+    take_profit      = 19700.0
+    strategy         = "regime_trader_v1"
+    regime           = "LOW_VOL"
+    strategy_equity  = 102000.0
+    strategy_pnl     = 2000.0
+    position_size    = 2
+    secret           = "any-random-secret-string"
 } | ConvertTo-Json
 
 Invoke-RestMethod -Uri "http://localhost:8000/webhook/alert" `
