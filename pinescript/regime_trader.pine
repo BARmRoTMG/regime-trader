@@ -26,18 +26,11 @@
 // ============================================================================
 
 //@version=5
-strategy(
-    title             = "Regime Trader",
-    shorttitle        = "RT",
-    overlay           = true,
-    max_labels_count  = 500,
-    default_qty_type  = strategy.fixed,
-    default_qty_value = 1,
-    initial_capital   = 100000,
-    commission_type   = strategy.commission.cash_per_contract,
-    commission_value  = 2.0,
-    calc_on_order_fills = false
-)
+strategy("Regime Trader", shorttitle="RT", overlay=true,
+     default_qty_type=strategy.fixed, default_qty_value=1,
+     initial_capital=100000,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=2.0)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input groups
