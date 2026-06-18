@@ -124,9 +124,9 @@ You need **three PowerShell windows** open at the same time. Do not close any of
 
 Open your browser and go to:
 ```
-http://localhost:8000/docs
+http://localhost:8000/api/docs
 ```
-You should see the FastAPI interactive API documentation page. If you see it, the backend is working correctly.
+You should see the FastAPI interactive API documentation page (Swagger UI). If you see it, the backend is working correctly.
 
 ---
 

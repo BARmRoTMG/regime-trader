@@ -238,7 +238,7 @@ FastAPI serves the built `frontend/dist/` at `/` automatically when the folder e
 
 ## API reference
 
-Full interactive docs at `http://localhost:8000/api/docs` (Swagger UI).
+Full interactive docs at **http://localhost:8000/api/docs** (Swagger UI).
 
 | Method | Path | Description |
 |--------|------|-------------|
